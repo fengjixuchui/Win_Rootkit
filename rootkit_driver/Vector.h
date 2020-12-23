@@ -3,26 +3,61 @@
 #include "FastMutex.h"
 #include "AutoLock.h"
 
+
 template <typename T>
 class vector {
 
-    T* arr;
-    int capacity;
-    int current_capacity;
-    FastMutex Mutex;
+    T* ptr_;
+    int capacity_;
+    int current_capacity_;
+    FastMutex mutex_;
 
 public:
-    vector()
-        : capacity(1),current_capacity(0)
+    vector():
+    capacity_(1),
+    current_capacity_(0),
+    ptr_(static_cast<T*>(ExAllocatePool(PagedPool, sizeof(T) * 1)))
     {
-        KdPrint(("Vector constructor called\n"));
-        Mutex.Init();
-        arr = static_cast<T*>(ExAllocatePool(PagedPool, sizeof(T) * 1));
+        mutex_.Init();
     }
 
     ~vector() {
-        KdPrint(("Vector deconstructor called\n"));
-        ExFreePool(arr);
+        ExFreePool(ptr_);
+    }
+
+    void push_back(const T& data) {
+        AutoLock<FastMutex> locker(mutex_);
+
+        // if the number of elements is equal to the max capacity
+        if (current_capacity_ == capacity_) {
+            T* temp = static_cast<T*>(ExAllocatePool(PagedPool, sizeof(T) * 2 * capacity_));
+
+            // copying old array elements to new array 
+            for (int i = 0; i < capacity_; i++) {
+                temp[i] = ptr_[i];
+            }
+
+            // deleting previous array 
+            ExFreePool(ptr_);
+            capacity_ *= 2;
+            ptr_ = temp;
+        }
+
+        // Inserting data 
+        ptr_[current_capacity_] = data;
+        current_capacity_++;
+    }
+
+    void pop()
+    {
+        AutoLock<FastMutex> locker(mutex_);
+        current_capacity_--;
+    }
+
+    int size()
+    {
+        AutoLock<FastMutex> locker(mutex_);
+        return current_capacity_;
     }
 
     void* operator new(size_t size) {
@@ -35,60 +70,77 @@ public:
         ExFreePool(ptr);
     }
 
-    void push_back(const T& data) {
-        AutoLock<FastMutex> locker(Mutex);
-
-        // if the number of elements is equal to the max capacity
-        if (current_capacity == capacity) {
-            T* temp = static_cast<T*>(ExAllocatePool(PagedPool, sizeof(T) * 2 * capacity));
-
-            // copying old array elements to new array 
-            for (int i = 0; i < capacity; i++) {
-                temp[i] = arr[i];
-            }
-
-            // deleting previous array 
-            ExFreePool(arr);
-            capacity *= 2;
-            arr = temp;
-        }
-
-        // Inserting data 
-        arr[current_capacity] = data;
-        current_capacity++;
-    }
-
     T& operator[](int i) {
-        AutoLock<FastMutex> locker(Mutex);
-        if (i >= current_capacity)
-            return NULL;
-
-        return arr[i];
+        AutoLock<FastMutex> locker(mutex_);
+        return ptr_[i];
     }
 
-    void pop()
-    {
-        AutoLock<FastMutex> locker(Mutex);
-        
-        if(current_capacity > 0)
-            current_capacity--;
+    T* begin() {
+        AutoLock<FastMutex> locker(mutex_);
+        return ptr_;
     }
 
-    int size()
-    {
-        AutoLock<FastMutex> locker(Mutex);
-        return current_capacity;
+    T* end() {
+        AutoLock<FastMutex> locker(mutex_);
+        return ptr_ + current_capacity_;
     }
 
-    bool exists(const T& data)
+    bool contains(const T& data)
     {
-        AutoLock<FastMutex> locker(Mutex);
+        AutoLock<FastMutex> locker(mutex_);
 
-        for (int i = 0; i < current_capacity; i++)
-            if (arr[i] == data)
+        for (const auto& item : *this)
+            if (item == data)
                 return true;
 
         return false;
 
+    }
+
+    vector<T>& operator=(vector<T>& rhs) {
+        capacity_ = rhs.capacity_;
+        current_capacity_ = rhs.current_capacity_;
+
+        ExFreePool(ptr_);
+
+        ptr_ = static_cast<T*>(ExAllocatePool(PagedPool, sizeof(T) * capacity_));
+
+        for (int i = 0; i < rhs.current_capacity_; i++)
+            ptr_[i] = rhs[i];
+        return *this;
+    }
+
+    vector<T>& operator=(vector<T>&& rhs) {
+        capacity_ = rhs.current_capacity_;
+        current_capacity_ = rhs.current_capacity_;
+
+        ExFreePool(ptr_);
+
+        ptr_ = rhs.ptr_;
+
+        rhs.ptr_ = nullptr;
+        rhs.capacity_ = 0;
+        rhs.current_capacity_ = 0;
+
+        return *this;
+    }
+
+    vector(vector<T>& rhs) {
+        capacity_ = rhs.capacity_;
+        current_capacity_ = rhs.current_capacity_;
+        ptr_ = static_cast<T*>(ExAllocatePool(PagedPool, sizeof(T) * capacity_));
+
+        for (int i = 0; i < rhs.current_capacity_; i++)
+            ptr_[i] = rhs[i];
+    }
+
+    vector(vector<T>&& rhs) {
+        capacity_ = rhs.capacity_;
+        current_capacity_ = rhs.current_capacity_;
+        ptr_ = rhs.ptr_;
+
+        rhs.ptr_ = nullptr;
+        rhs.capacity_ = 0;
+        rhs.current_capacity_ = 0;
     }
 };
